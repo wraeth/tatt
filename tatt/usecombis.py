@@ -6,6 +6,12 @@ import math
 from subprocess import *
 
 from .tool import unique
+import portage
+
+def flag_is_active(flag):
+    if flag.startswith('-'):
+        return False
+    return True
 
 ## Useflag Combis ##
 def findUseFlagCombis (package, config):
@@ -13,31 +19,14 @@ def findUseFlagCombis (package, config):
     Generate combinations of use flags to test
     The output will be a list each containing a ready to use USE=... string
     """
-    uses=Popen('equery -C uses '+package.packageString()+' | cut -f 1 | cut -c 2-40 | xargs',
-               shell=True, stdout=PIPE).communicate()[0].decode('utf-8')
-    uselist=uses.split()
-    # The uselist could have duplicates due to slot-conditional
-    # output of equery
-    uselist=unique(uselist)
+    atom = portage.versions.best(portage.portdb.match(package.packageString()))
+    uselist, required_use = portage.portdb.aux_get(atom, ['IUSE', 'REQUIRED_USE'])
+    uselist = uselist.split()
+
     for i in config['ignoreprefix']:
         uselist=[u for u in uselist if not re.match(i,u)]
 
-    if config['usecombis'] == 0:
-        # Do only all and nothing:
-        swlist = [0,2**(len(uselist))-1]
-    # Test if we can exhaust all USE-combis by computing the binary logarithm.
-    elif len(uselist) > math.log(config['usecombis'],2):
-        # Generate a sample of USE combis
-        s = 2**(len (uselist))
-        random.seed()
-        swlist = [random.randint(0, s-1) for i in range (config['usecombis'])]
-        swlist.append(0)
-        swlist.append(s-1)
-        swlist.sort()
-        swlist = unique(swlist)
-    else:
-        # Yes we can: generate all combinations
-        swlist = list(range(2**len(uselist)))
+    swlist = list(range(2**len(uselist)))
 
     usecombis=[]
     for sw in swlist:
@@ -49,7 +38,26 @@ def findUseFlagCombis (package, config):
                 mod.append("-")
         usecombis.append(list(zip(mod, uselist)))
 
-    usecombis = [["".join(uf) for uf in combi] for combi in usecombis]
+    allcombis = []
+    for c in usecombis:
+        c = ["".join(uf) for uf in c]
+        if portage.dep.check_required_use(required_use, c, uselist.__contains__).__bool__() is True:
+            allcombis.append(c)
+
+    usecombis = []
+
+    random.seed()
+    n = config['usecombis']
+    c = 0
+    while c < n and len(allcombis) > 0:
+        usecombis.append(allcombis.pop(random.randint(0, len(allcombis)-1)))
+        c += 1
+
+    # include all-on and all-off if not already included
+    if len(allcombis) > 0:
+        usecombis.append(allcombis.pop(0))
+    if len(allcombis) > 0:
+        usecombis.append(allcombis.pop())
 
     # Merge everything to a USE="" string
     return ["USE=\'"+" ".join(uc)+ "\'" for uc in usecombis]
