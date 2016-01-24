@@ -1,13 +1,72 @@
-eout=$( @@USE@@ @@FEATURES@@ emerge -1 @@EMERGEOPTS@@ @@CPV@@ 2>&1 1>/dev/tty )
-if [[ $? == 0 ]] ; then
-  echo "@@USE@@ @@FEATURES@@ succeeded for @@CPV@@" >> @@REPORTFILE@@;
-elif [[ "${eout}" =~ REQUIRED_USE ]] ; then
-  echo "${eout}";
-  echo "@@USE@@ : REQUIRED_USE not satisfied (probably)" >> @@REPORTFILE@@;
-elif [[ "${eout}" =~ USE_CHANGES ]] ; then
-  echo "${eout}";
-  echo "@@USE@@ : USE dependencies not satisfied (probably)" >> @@REPORTFILE@@;
+# =====================================================================================================================
+#
+tstamp=$(date +%Y%m%d%H%M%S)
+((i++))
+PN="@@CPV@@"
+PN=${PN/*\//}
+PF="@@CPV@@"
+PF=${PF/=/}
+@@USE@@
+logdir="${i}-${PN}:${tstamp}"
+stat='notrun'
+
+if [[ ! -f /etc/portage/env/features-test.conf ]] ; then
+  echo "Missing FEATURES environment file - please create /etc/portage/env/features-test.conf"
+  exit 1
+fi
+grep 'FEATURES.*test' /etc/portage/env/features-test.conf > /dev/null
+if [[ $? -ne 0 ]] ; then
+  echo "features-test.conf exists but doesn't set FEATURES to test"
+  exit 1
+fi
+
+echo "@@CPV@@ ${USE}" > /etc/portage/package.use/xxruntesting
+echo "@@CPV@@ features-test.conf" > /etc/portage/package.env/xxruntesting
+
+unset USE
+
+dout=$( emerge -1o --autounmask-write @@EMERGEOPTS@@ @@CPV@@ 2>&1 1>/dev/tty )
+etc-update --quiet --automode -5
+dout=$( emerge -1o @@EMERGEOPTS@@ @@CPV@@ 2>&1 1>/dev/tty )
+if [[ $? != 0 ]] ; then
+  if [[ "${dout}" =~ REQUIRED_USE ]] ; then
+    echo "Test ${i}: @@USE@@ : REQUIRED_USE not satisfied (probably)" >> @@REPORTFILE@@;
+    echo "REQUIRED_USE not satisfied"
+    stat='failedcalc'
+  else
+    echo "Test ${i}: @@USE@@ : {R}DEPEND not satisfied (probably)" >> @@REPORTFILE@@;
+    echo "${dout}" > ${logdir}.depend
+    echo "DEPEND not satisfied"
+    stat='faileddep'
+  fi;
 else
-  echo "${eout}";
-  echo "@@USE@@ @@FEATURES@@ failed for @@CPV@@" >> @@REPORTFILE@@;
+  stat='depok'
 fi;
+if [[ "${stat}" =~ depok ]] ; then
+  eout=$( FEATURES='test' emerge -1O --ignore-default-opts -v @@CPV@@ 2>&1 1>/dev/tty )
+  if [[ $? == 0 ]] ; then
+    echo "Test ${i}: @@USE@@ @@FEATURES@@ succeeded for @@CPV@@" >> @@REPORTFILE@@;
+  elif [[ "${eout}" =~ REQUIRED_USE ]] ; then
+    echo "${eout}";
+    echo "Test ${i}: @@USE@@ : REQUIRED_USE not satisfied (probably)" >> @@REPORTFILE@@;
+  elif [[ "${eout}" =~ USE_CHANGES ]] ; then
+    echo "${eout}";
+    echo "Test ${i}: @@USE@@ : USE dependencies not satisfied (probably)" >> @@REPORTFILE@@;
+  else
+    echo "${eout}";
+    echo "Test ${i}: @@USE@@ @@FEATURES@@ failed for @@CPV@@ -> ${logdir}" >> @@REPORTFILE@@;
+    cp -r /var/tmp/portage/${PF}/temp ./${logdir}
+	emerge --info --verbose > ./${logdir}/emerge.info
+  fi;
+  stat='complete'
+fi;
+
+echo "Cleaning up ..."
+rm -v /etc/portage/package.use/xxruntesting /etc/portage/package.env/xxruntesting
+if [[ "${stat}" =~ failedcalc ]] ; then
+  echo "No package cleanup"
+else
+  emerge -uDN --with-bdeps=y @@EMERGEOPTS@@ @world
+  emerge -c --nospinner --jobs 3
+fi;
+
