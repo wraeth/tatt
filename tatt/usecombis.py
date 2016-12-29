@@ -24,7 +24,7 @@ def findUseFlagCombis (package, config):
     uselist = uselist.split()
 
     for i in config['ignoreprefix']:
-        uselist=[u for u in uselist if not re.match(i,u)]
+        uselist=[u.strip('+') for u in uselist if not re.match(i,u)]
 
     swlist = list(range(2**len(uselist)))
 
